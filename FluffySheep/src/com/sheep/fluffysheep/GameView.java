@@ -21,9 +21,20 @@ public class GameView extends SurfaceView implements Runnable {
 	private SurfaceHolder holder;
 	volatile boolean running = false;
 
-	private boolean isGameRunning = true;
+	private enum GameState {
+		BeforeStart,	// Game has not started, showing 'start' option
+		Running,		// Game is running
+		Finished		// Game is finished (after user crash)
+	}
 
+	/**
+	 * 	Holds the current game state
+	 */
+	private GameState gameState;
 
+	private float sheepFallTime = 0;
+	private float sheepStartYPosition = 0;
+	private float sheepStartSpeed = 0;
 
 	/**
 	 * Current wall position 
@@ -50,7 +61,7 @@ public class GameView extends SurfaceView implements Runnable {
 	/**
 	 * Sheep current speed
 	 */
-	private float sheepVSpeed;
+	//private float sheepVSpeed;
 
 	/**
 	 *  The number of seconds the wall pass from the right side of the screen to the left one
@@ -66,6 +77,10 @@ public class GameView extends SurfaceView implements Runnable {
 	private float backgroundBottmXPosition;
 
 	private Bitmap wallBitmap;
+	
+	private Bitmap startButtonBitmap;
+	
+	private Bitmap finishButton;
 
 	public GameView(Context context, Bitmap framebuffer) {
 		super(context);
@@ -77,15 +92,23 @@ public class GameView extends SurfaceView implements Runnable {
 
 		wallPaint = new Paint();
 		wallPaint.setColor(Color.BLACK);
+		wallPaint.setTextSize(30);
 
 		sheepBitmap = BitmapFactory.decodeResource(getResources(),
 				R.drawable.ic_launcher);
 
 		backgroundBottom = BitmapFactory.decodeResource(getResources(),
 				R.drawable.background_bottom);
+		
+		startButtonBitmap = BitmapFactory.decodeResource(getResources(),
+				R.drawable.start_button);
+		
+		finishButton = BitmapFactory.decodeResource(getResources(),
+				R.drawable.finish_button);
 
-
-		backgroundBottmXPosition = 0;
+		prepareAssets();
+		
+		ResetGame();
 	}
 
 	public void resume() {
@@ -134,16 +157,33 @@ public class GameView extends SurfaceView implements Runnable {
 	}
 
 	private void updateView(float deltaTime) {
-		Canvas c = new Canvas(framebuffer);
+		Canvas canvas = new Canvas(framebuffer);
 
 		// Draw the background
-		c.drawBitmap(backgroundImage, 0, 0, wallPaint);
+		canvas.drawBitmap(backgroundImage, 0, 0, wallPaint);
 
-		drawWall(c);
+		// Draw the wall
+		canvas.drawBitmap(wallBitmap, wallXPosition, wallYPosition, wallPaint);
 
-		drawSheep(c);
+		// Create a rotated sheep bitmap according to the angle
+		Matrix matrix = new Matrix();
+		matrix.postRotate(sheepAngle, sheepBitmap.getWidth() / 2, sheepBitmap.getHeight() / 2);
+		matrix.postTranslate(framebuffer.getWidth() / 2, sheepYPosition);
 
-		c.drawBitmap(backgroundBottom, backgroundBottmXPosition, getHeight() - backgroundBottom.getHeight(), wallPaint);
+		// Draw the sheep
+		canvas.drawBitmap(sheepBitmap, matrix, wallPaint);
+
+		// Draw the bottom moving background part
+		canvas.drawBitmap(backgroundBottom, backgroundBottmXPosition, framebuffer.getHeight() - backgroundBottom.getHeight(), wallPaint);
+
+		if (gameState.equals(GameState.BeforeStart)) {
+			// Show the start bitmap
+			canvas.drawBitmap(startButtonBitmap, (framebuffer.getWidth() - startButtonBitmap.getWidth()) / 2, framebuffer.getHeight() / 5, wallPaint);
+		}
+		else if (gameState.equals(GameState.Finished)) {
+			// Show the finish bitmap
+			canvas.drawBitmap(finishButton, (framebuffer.getWidth() - startButtonBitmap.getWidth()) / 2, framebuffer.getHeight() / 5, wallPaint);
+		}
 	}
 
 	private void prepareAssets() {
@@ -157,8 +197,8 @@ public class GameView extends SurfaceView implements Runnable {
 		Bitmap originalWallBitmap = BitmapFactory.decodeResource(getResources(),
 				R.drawable.wall);
 
-		float scaleWidth = ((float) getWidth()) / originaBackgroundImage.getWidth();
-		float scaleHeight = ((float) getHeight()) / originaBackgroundImage.getHeight();
+		float scaleWidth = ((float) framebuffer.getWidth()) / originaBackgroundImage.getWidth();
+		float scaleHeight = ((float) framebuffer.getHeight()) / originaBackgroundImage.getHeight();
 
 		Matrix matrix = new Matrix();
 		matrix.postScale(scaleWidth, scaleHeight);
@@ -181,16 +221,18 @@ public class GameView extends SurfaceView implements Runnable {
 
 		// Create the game assets
 		createNewWall();
-		createBird();
-		sheepVSpeed = 0;
-		sheepXPosition = getWidth() / 2;
+		sheepXPosition = framebuffer.getWidth() / 2;
+		sheepFallTime = 0;
 	}
 
 	/**
 	 * @param deltaTime in ms
 	 */
 	private void updateLogic(float deltaTime) {
-		if (isGameRunning) {
+
+		// Update the game logic only if the game is running
+		if (gameState.equals(GameState.Running)) {
+
 			// Check if the wall got out of the left side of the screen
 			if (wallXPosition + wallBitmap.getWidth() < 0) {
 				// Yes, it is out of the screen, we need to create a new wall
@@ -198,24 +240,24 @@ public class GameView extends SurfaceView implements Runnable {
 			}		
 
 			// Advance the wall ( physics: X = V * t )
-			int wallSpeed = getWidth() / wallMoveTime;
+			int wallSpeed = framebuffer.getWidth() / wallMoveTime;
 			float pixelsToAdvance = ((deltaTime / 1000) * wallSpeed);
 
 			wallXPosition -= pixelsToAdvance;
 
-			// Calculate sheep position ( physics: h = m * (v * v)  )
-			sheepVSpeed += 0.2;
+			sheepFallTime += deltaTime;
+
+			sheepYPosition = (float) (300 * (sheepFallTime / 1000) * (sheepFallTime / 1000)) - sheepStartSpeed * (sheepFallTime / 1000) + sheepStartYPosition;
+
+			float sheepVSpeed = 300 * (sheepFallTime / 1000) - sheepStartSpeed;
+
+			Log.i("sheep", "Speed: " + sheepVSpeed);
 
 			if (sheepVSpeed > 0) {
-				sheepYPosition += (sheepVSpeed * sheepVSpeed);
-
 				// Sheep is with nose down according to her speed
-				sheepAngle = -30 + sheepVSpeed * 15;
+				sheepAngle = -30 + sheepVSpeed / 2;
 			}
 			else {
-				// The sheep is going up
-				sheepYPosition -= (sheepVSpeed * sheepVSpeed);
-
 				// Sheep is with nose up
 				sheepAngle = -30;
 			}
@@ -223,8 +265,8 @@ public class GameView extends SurfaceView implements Runnable {
 			// Advance the bottom background
 			backgroundBottmXPosition -= pixelsToAdvance;
 
-			if (backgroundBottmXPosition < -getWidth()) {
-				backgroundBottmXPosition += getWidth();
+			if (backgroundBottmXPosition < -framebuffer.getWidth()) {
+				backgroundBottmXPosition += framebuffer.getWidth();
 			}
 
 			CheckCollision();
@@ -251,7 +293,7 @@ public class GameView extends SurfaceView implements Runnable {
 
 		if (!doWeHaveCollision) {
 			// Check if the sheep has crashed on the ground
-			if (sheepYPosition + sheepBitmap.getHeight() > getHeight() - backgroundBottom.getHeight()) {
+			if (sheepYPosition + sheepBitmap.getHeight() > framebuffer.getHeight() - backgroundBottom.getHeight()) {
 
 				// We have collision 
 				Log.i("sheep", "col col");
@@ -262,36 +304,16 @@ public class GameView extends SurfaceView implements Runnable {
 
 		if (doWeHaveCollision) {
 			// Stop the game
-			isGameRunning = false;
+			gameState = GameState.Finished;
 		}
-	}
-
-	private void drawWall(Canvas canvas) {
-		// Draw the upper square
-		//canvas.drawRect(wallXPosition, 0, wallXPosition + wallWidth, wallHoleYTopPosition, wallPaint);
-
-		// Draw the lower square
-		//canvas.drawRect(wallXPosition, wallHoleYBottomPosition, wallXPosition + wallWidth, getHeight(), wallPaint);	
-
-		canvas.drawBitmap(wallBitmap, wallXPosition, wallYPosition, wallPaint);
-	}
-
-	private void drawSheep(Canvas canvas) {
-		// Create a rotated sheep bitmap according to the angle
-		Matrix matrix = new Matrix();
-		matrix.postRotate(sheepAngle, sheepBitmap.getWidth() / 2, sheepBitmap.getHeight() / 2);
-		matrix.postTranslate(getWidth() / 2, sheepYPosition);
-
-		// Draw the sheep
-		canvas.drawBitmap(sheepBitmap, matrix, wallPaint);
 	}
 
 	/**
 	 * Creates a new wall and place it to the right of the screen (off the screen)
 	 */
 	private void createNewWall() {
-		int screenWidth = this.getWidth();
-		int screenHeight = this.getHeight();
+		int screenWidth = this.framebuffer.getWidth();
+		int screenHeight = this.framebuffer.getHeight();
 
 		// Set the wall width
 		//	wallWidth = (screenWidth / 10);
@@ -306,30 +328,49 @@ public class GameView extends SurfaceView implements Runnable {
 		wallHoleYBottomPosition = (float) (wallBitmap.getHeight() * 0.6);
 	}
 
-	private void createBird() {
-		// Place the bird ~ in the middle of the screen
-		sheepYPosition = (getHeight() / 2);
-	}
-
 	@Override
 	public boolean onTouchEvent(MotionEvent event) {
 
 		if (event.getAction() == MotionEvent.ACTION_DOWN) {
+			if (gameState.equals(GameState.BeforeStart)) {
+				// The user started the game
+				gameState = GameState.Running;
+			}
+			
+			if (gameState.equals(GameState.Finished)) {
+				// The user re-started the game
+				ResetGame();
+			}
+			
 			// The user has touched the screen 
-
 			if (sheepYPosition > 0) {
-				sheepVSpeed = -4;
+				sheepStartYPosition = sheepYPosition;
+				sheepFallTime = 0;
+				sheepStartSpeed = 250;
 			}
 			else {
-				Log.d("Sheep", "Touch is out of screen");
+				Log.d("Sheep", "Sheep is out of screen - do nothing with touch event");
 			}
 
-		}
-		
-		if (!isGameRunning) {
-			isGameRunning = true;
 		}
 
 		return super.onTouchEvent(event);
+	}
+
+	/**
+	 * Reset all game values and prepare for a new game
+	 */
+	private void ResetGame() {
+		
+		gameState = GameState.BeforeStart;
+		
+		backgroundBottmXPosition = 0;
+		
+		// Place the bird ~ in the middle of the screen
+		sheepYPosition = (framebuffer.getHeight() / 2);
+		
+		sheepAngle = 0;
+		
+		createNewWall();
 	}
 }
